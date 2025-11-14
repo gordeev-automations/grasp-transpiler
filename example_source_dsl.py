@@ -1,4 +1,4 @@
-from gordeev_automations.dsl import rule, goal, neg_goal, sql_cond, sql_expr, match, null, strval, dictval, aggr, array
+from dsl import rule, goal, neg_goal, sql_cond, sql_expr, match, null, strval, dictval, aggr, array
 
 
 

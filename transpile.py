@@ -6,7 +6,7 @@ import aiohttp
 
 
 
-from framework_datalog import get_rules
+from example_source_dsl import get_rules
 from dsl import rules_to_records, schemas_to_records
 
 
@@ -98,11 +98,18 @@ async def ensure_transpiler_started(session, pipeline_name):
             break
         await asyncio.sleep(1)
 
-
+def read_transpiler_sql():
+    curr_dir = os.path.abspath(os.path.dirname(__file__))
+    # select all *.sql files from transpiler/ directory
+    # sort by name. Read in order, concatenate content and return
+    sql_files = [f for f in os.listdir(f'{curr_dir}/transpiler') if f.endswith('.sql')]
+    sql_files.sort()
+    sql_files = [open(f'{curr_dir}/transpiler/{f}', 'r').read() for f in sql_files]
+    return '\n'.join(sql_files)
 
 async def ensure_transpiler_pipeline_is_ready(session, pipeline_name):
     curr_dir = os.path.abspath(os.path.dirname(__file__))
-    transpiler_sql = open(f'{curr_dir}/../views/transpiler.sql').read()
+    transpiler_sql = read_transpiler_sql()
     # retrieve current version of program_code for transpiler pipeline
     # is it is not the same as on on the disc, recompile it
     if (await do_need_to_recompile_transpiler(session, pipeline_name, transpiler_sql)):
@@ -147,20 +154,21 @@ async def main(app_schema_path):
     feldera_url = 'http://localhost:8080'
     pipeline_name = 'transpiler'
 
-    scripts_dir = os.path.abspath(os.path.dirname(__file__))
-    framework_schema = json5.load(open(f'{scripts_dir}/../schema.json5', 'r'))
+    # scripts_dir = os.path.abspath(os.path.dirname(__file__))
+    # framework_schema = json5.load(open(f'{scripts_dir}/../schema.json5', 'r'))
     app_schema = json5.load(open(app_schema_path, 'r'))
     rules = get_rules()
 
-    tables1 = framework_schema['tables']
+    # tables1 = framework_schema['tables']
     tables2 = app_schema['tables']
-    if set(tables1.keys()) & set(tables2.keys()):
-        raise Exception(f"Conflicting tables names: {set(tables1.keys()) & set(tables2.keys())}")
+    # if set(tables1.keys()) & set(tables2.keys()):
+    #     raise Exception(f"Conflicting tables names: {set(tables1.keys()) & set(tables2.keys())}")
 
     async with aiohttp.ClientSession(feldera_url, timeout=aiohttp.ClientTimeout(sock_read=0,total=0)) as session:
         await ensure_transpiler_pipeline_is_ready(session, pipeline_name)
         records1, pipeline_id = rules_to_records(rules)
-        records2 = schemas_to_records({**tables1, **tables2}, pipeline_id)
+        # records2 = schemas_to_records({**tables1, **tables2}, pipeline_id)
+        records2 = schemas_to_records(tables2, pipeline_id)
         # print(f"SCHEMA RECORDS: {json.dumps(records2)}")
         records = {**records2, **records1}
         # for table_name, rows in records.items():

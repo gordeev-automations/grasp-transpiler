@@ -1,0 +1,239 @@
+{
+    tables: {
+        fact_retracted: {
+            has_tenant: false,
+            transient: true,
+            columns: {
+                fact_id: {type: 'TEXT'},
+                fact_type: {type: 'TEXT'},
+                at: {type: 'TIMESTAMP'},
+            },
+        },
+        node_started: {
+            has_tenant: false,
+            transient: true,
+            columns: {
+                node_session_id: {type: 'TEXT'},
+                session_type: {type: 'TEXT'},
+                at: {type: 'TIMESTAMP'},
+            },
+        },
+        node_stopped: {
+            has_tenant: false,
+            transient: true,
+            columns: {
+                node_session_id: {type: 'TEXT'},
+                at: {type: 'TIMESTAMP'},
+            },
+        },
+        node_ping: {
+            has_tenant: false,
+            transient: true,
+            columns: {
+                node_session_id: {type: 'TEXT'},
+                at: {type: 'TIMESTAMP'},
+            },
+        },
+        node_pong: {
+            has_tenant: false,
+            transient: true,
+            columns: {
+                node_ping_id: {type: 'TEXT'},
+                node_session_id: {type: 'TEXT'},
+                at: {type: 'TIMESTAMP'},
+            },
+        },
+        available_task_type: {
+            has_tenant: false,
+            transient: true,
+            columns: {
+                session_type: {type: 'TEXT'},
+                task_type: {type: 'TEXT'},
+            },
+        },
+        session_started: {
+            has_tenant: false,
+            transient: true,
+            columns: {
+                // output_records_tenant: {type: "TEXT", nullable: true},
+                parent_session_id: {type: 'TEXT'},
+                session_id: {type: 'TEXT'},
+                session_type: {type: 'TEXT'},
+                start_task_id: {type: 'TEXT'},
+                at: {type: 'TIMESTAMP'},
+            },
+        },
+        session_shutdown: {
+            has_tenant: false,
+            transient: true,
+            columns: {
+                session_id: {type: 'TEXT'},
+                at: {type: 'TIMESTAMP'},
+            },
+        },
+        session_finished: {
+            has_tenant: false,
+            transient: true,
+            columns: {
+                session_id: {type: 'TEXT'},
+                at: {type: 'TIMESTAMP'},
+            },
+        },
+        session_crashed: {
+            has_tenant: false,
+            transient: true,
+            columns: {
+                session_id: {type: 'TEXT'},
+                at: {type: 'TIMESTAMP'},
+            },
+        },
+        task_assigned: {
+            has_tenant: false,
+            transient: true,
+            columns: {
+                // output_records_tenant: {type: "TEXT", nullable: true},
+                session_id: {type: 'TEXT'},
+                task_type: {type: 'TEXT'},
+                desired_task_id: {type: 'TEXT'},
+                arg: {type: 'VARIANT'},
+                at: {type: 'TIMESTAMP'},
+            }
+        },
+        task_started: {
+            has_tenant: false,
+            transient: true,
+            columns: {
+                session_id: {type: 'TEXT'},
+                task_id: {type: 'TEXT'},
+                at: {type: 'TIMESTAMP'},
+            },
+        },
+        task_succeeded: {
+            has_tenant: false,
+            transient: true,
+            columns: {
+                session_id: {type: 'TEXT'},
+                task_id: {type: 'TEXT'},
+                at: {type: 'TIMESTAMP'},
+            },
+        },
+        task_failed: {
+            has_tenant: false,
+            transient: true,
+            columns: {
+                session_id: {type: 'TEXT'},
+                task_id: {type: 'TEXT'},
+                error: {type: 'TEXT'},
+                reason: {type: 'VARIANT'},
+                at: {type: 'TIMESTAMP'},
+            },
+        },
+        task_retry_scheduled: {
+            has_tenant: false,
+            transient: true,
+            materialized: true,
+            columns: {
+                desired_task_id: {type: 'TEXT'},
+                at: {type: 'TIMESTAMP'},
+            },
+        },
+        // task_manually_completed: {
+        //     columns: {
+        //         desired_task_id: {type: 'TEXT'},
+        //         at: {type: 'TIMESTAMP'},
+        //     }  
+        // },
+
+        // TG API
+
+        tg_update: {
+            // materialized: true,
+            columns: {
+                tg_update: {type: "VARIANT"},
+                tg_bot_username: {type: "TEXT"},
+                collected_at: {type: "TIMESTAMP"},
+            },
+        },
+
+        tg_bot_was_blocked: {
+            materialized: true,
+            columns: {
+                tg_bot_username: {type: "TEXT"},
+                tg_account_id: {type: "BIGINT"},
+                discovered_at: {type: "TIMESTAMP"}
+            },
+        },
+
+        tg_bot_voice_messages_were_denied: {
+            materialized: true,
+            columns: {
+                tg_bot_username: {type: "TEXT"},
+                tg_account_id: {type: "BIGINT"},
+                discovered_at: {type: "TIMESTAMP"}
+            },
+        },
+
+        static_media_uploaded_to_tg: {
+            // we want it to be kept in memory at all times
+            // so we can make ad-hoc requests
+            // This should be small
+            materialized: true,
+            columns: {
+                tg_bot_username: {type: "TEXT"},
+                file_md5: {type: "TEXT"},
+                tg_file_id: {type: "TEXT"},
+                at: {type: "TIMESTAMP"},
+            },
+        },
+
+        static_response_sent_by_tg_bot: {
+            materialized: true,
+            columns: {
+                // allow this field to be nullable,
+                // so in future we would be able to send messages
+                // that do not have tg_update trigger
+                //
+                // for example ads and notifications
+                triggering_tg_update_id: {type: "BIGINT", nullable: true},
+                tg_bot_username: {type: "TEXT"},
+                tg_account_id: {type: "BIGINT"},
+                // first_tg_message_id: {type: "BIGINT"},
+
+                // just an array of ids as numbers
+                // tg_messages_ids: {type: "VARIANT"},
+                static_response_type: {type: "TEXT"},
+                at: {type: "TIMESTAMP"},
+            },
+        },
+
+        tg_node_response: {
+            materialized: true,
+            columns: {
+                tg_bot_username: {type: "TEXT"},
+                tg_account_id: {type: "BIGINT"},
+                tg_node_type: {type: "TEXT"},
+                tg_node_id: {type: "TEXT"},
+                tg_messages_ids: {type: "VARIANT"},
+                parent_tg_nodes_ids: {type: "VARIANT"},
+                at: {type: "TIMESTAMP"},
+            }
+        },
+
+        tg_account_was_a_chat_member: {
+            columns: {
+                tg_user_info: {type: "VARIANT"},
+                tg_chat_id: {type: "BIGINT"},
+                at: {type: "TIMESTAMP"},
+            }
+        },
+
+        tg_admin_event: {
+            columns: {
+                tg_chat_id: {type: "BIGINT"},
+                tg_event_id: {type: "BIGINT"},
+                event_json: {type: "VARIANT"},
+                collected_at: {type: "TIMESTAMP"},
+            }
+        },
+    },
+}
