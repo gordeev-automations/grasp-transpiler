@@ -132,6 +132,8 @@ async def ensure_transpiler_pipeline_is_ready(session, pipeline_name):
 
 
 async def insert_records(session, pipeline_name, records):
+    insert_tokens = set()
+
     url = f'/v0/pipelines/{pipeline_name}/start_transaction'
     async with session.post(url) as resp:
         if resp.status not in [200, 201]:
@@ -146,6 +148,7 @@ async def insert_records(session, pipeline_name, records):
                 body = await resp.text()
                 raise Exception(f"Unexpected response {resp.status}: {body}")
             json_resp = await resp.json()
+            insert_tokens.add(json_resp['token'])
             # print(f"Inserted records to table {table_name}: {json_resp}")
 
     url = f'/v0/pipelines/{pipeline_name}/commit_transaction'
@@ -153,11 +156,25 @@ async def insert_records(session, pipeline_name, records):
         if resp.status not in [200, 201]:
             body = await resp.text()
             raise Exception(f"Unexpected response {resp.status}: {body}")
+    return insert_tokens
 
+async def fetch_ingest_status(session, pipeline_name, token):
+    url = f'/v0/pipelines/{pipeline_name}/completion_status'
+    async with session.get(url, params={'token': token}) as resp:
+        return await resp.json()
 
-
-async def wait_till_complete(session, pipeline_id):
-    pass
+async def wait_till_complete(session, pipeline_name, tokens):
+    while tokens:
+        for token in list(tokens):
+            status = await fetch_ingest_status(session, pipeline_name, token)
+            match status:
+                case {'status': 'inprogress'}:
+                    pass
+                case {'status': 'complete'}:
+                    tokens.remove(token)
+                case _:
+                    raise Exception(f"Unknown ingest status: {status}")
+        await asyncio.sleep(1)
 
 
 
@@ -186,9 +203,10 @@ async def main(app_schema_path):
         #     print(f"Table: {table_name}")
         #     with open(f'{table_name}.json', 'w') as f:
         #         f.write(json.dumps(rows))
-        await insert_records(session, pipeline_name, records)
+        tokens = await insert_records(session, pipeline_name, records)
+        # print(f"RESP : {resp}")
         # await insert_records(session, pipeline_name, records1)
-        await wait_till_complete(session, pipeline_id)
+        await wait_till_complete(session, pipeline_name, tokens)
 
 
 
