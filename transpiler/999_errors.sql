@@ -46,6 +46,28 @@ CREATE MATERIALIZED VIEW "error:neg_fact_sql_unresolved" AS
         AND expr_type = fact_arg.expr_type);
 
 /*
+error:match_right_expr_unresolved(pipeline_id:, rule_id:, match_id:) <-
+    body_match(pipeline_id:, rule_id:, left_expr_id:, left_expr_type:)
+    not substituted_expr(pipeline_id:, expr_id: left_expr_id, expr_type: left_expr_type)
+*/
+CREATE MATERIALIZED VIEW "error:match_right_expr_unresolved" AS
+    SELECT DISTINCT
+        body_match.pipeline_id,
+        body_match.rule_id,
+        body_match.match_id
+    FROM body_match
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM substituted_expr
+        WHERE pipeline_id = body_match.pipeline_id
+        AND rule_id = body_match.rule_id
+        AND expr_id = body_match.left_expr_id
+        AND expr_type = body_match.left_expr_type
+    );
+
+
+
+/*
 error(pipeline_id:, error_type: "unbound_var_in_negative_fact") <-
     error:unbound_var_in_negative_fact(pipeline_id:)
 error(pipeline_id:, error_type: "neg_fact_sql_unresolved") <-
@@ -62,4 +84,12 @@ CREATE MATERIALIZED VIEW "error" AS
     SELECT DISTINCT
         "error:neg_fact_sql_unresolved".pipeline_id AS pipeline_id,
         'neg_fact_sql_unresolved' AS error_type
-    FROM "error:neg_fact_sql_unresolved";
+    FROM "error:neg_fact_sql_unresolved"
+
+    UNION
+
+    SELECT DISTINCT
+        "error:match_right_expr_unresolved".pipeline_id AS pipeline_id,
+        'match_right_expr_unresolved' AS error_type
+    FROM "error:match_right_expr_unresolved";
+

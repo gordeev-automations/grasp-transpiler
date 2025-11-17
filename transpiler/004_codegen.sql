@@ -343,26 +343,6 @@ CREATE MATERIALIZED VIEW var_bound_via_match AS
         AND rule_param.expr_type = substituted_expr.expr_type;
 
 /*
-error:match_right_expr_unresolved(pipeline_id:, rule_id:, match_id:) <-
-    body_match(pipeline_id:, rule_id:, left_expr_id:, left_expr_type:)
-    not substituted_expr(pipeline_id:, expr_id: left_expr_id, expr_type: left_expr_type)
-*/
-CREATE MATERIALIZED VIEW "error:match_right_expr_unresolved" AS
-    SELECT DISTINCT
-        body_match.pipeline_id,
-        body_match.rule_id,
-        body_match.match_id
-    FROM body_match
-    WHERE NOT EXISTS (
-        SELECT 1
-        FROM substituted_expr
-        WHERE pipeline_id = body_match.pipeline_id
-        AND rule_id = body_match.rule_id
-        AND expr_id = body_match.left_expr_id
-        AND expr_type = body_match.left_expr_type
-    );
-
-/*
 neg_fact_where_cond(pipeline_id:, rule_id:, fact_id:, sql_lines:) <-
     fact_alias(pipeline_id:, rule_id:, fact_id:, alias:, table_name:, negated: true)
     fact_arg(pipeline_id:, rule_id:, fact_id:, key:, expr_id:, expr_type:)

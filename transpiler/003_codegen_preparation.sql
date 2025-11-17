@@ -2,6 +2,7 @@
 table_dependency(pipeline_id:, table_name:, parent_table_name:) <-
     rule(pipeline_id:, table_name:, rule_id:)
     body_fact(pipeline_id:, rule_id:, table_name: parent_table_name)
+    #all_records_inserted(pipeline_id:)
 table_dependency(pipeline_id:, table_name:, parent_table_name:) <-
     table_dependency(pipeline_id:, table_name:, parent_table_name:)
     table_dependency(pipeline_id:, table_name: parent_table_name, parent_table_name:)
@@ -16,9 +17,11 @@ CREATE MATERIALIZED VIEW table_dependency AS
     JOIN body_fact
         ON rule.pipeline_id = body_fact.pipeline_id
         AND rule.rule_id = body_fact.rule_id
-    
+    -- JOIN all_records_inserted
+    --     ON rule.pipeline_id = all_records_inserted.pipeline_id
+
     UNION
-    
+
     SELECT DISTINCT
         t1.pipeline_id,
         t1.table_name,
@@ -29,8 +32,27 @@ CREATE MATERIALIZED VIEW table_dependency AS
         AND t1.parent_table_name = t2.table_name;
 
 /*
+table_without_dependencies(pipeline_id:, table_name:) <-
+    rule(pipeline_id:, table_name:, rule_id:)
+    not body_fact(pipeline_id:, rule_id:)
+*/
+CREATE MATERIALIZED VIEW table_without_dependencies AS
+    SELECT DISTINCT
+        rule.pipeline_id,
+        rule.table_name
+    FROM rule
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM body_fact
+        WHERE rule.pipeline_id = body_fact.pipeline_id
+        AND rule.rule_id = body_fact.rule_id
+    );
+
+/*
 table_output_order(pipeline_id:, table_name:, order: 0) <-
     schema_table(pipeline_id:, table_name:)
+table_output_order(pipeline_id:, table_name:, order: 0) <-
+    table_without_dependencies(pipeline_id:, table_name:)
 table_output_order(pipeline_id:, table_name:, order: max<order>+1) <-
     table_dependency(pipeline_id:, table_name:, parent_table_name:)
     table_output_order(pipeline_id:, table_name: parent_table_name, order:)
@@ -43,6 +65,14 @@ CREATE MATERIALIZED VIEW table_output_order AS
         table_name,
         0 AS "order"
     FROM schema_table
+
+    UNION
+
+    SELECT DISTINCT
+        table_without_dependencies.pipeline_id,
+        table_without_dependencies.table_name,
+        0 AS "order"
+    FROM table_without_dependencies
 
     UNION
 
@@ -60,6 +90,7 @@ CREATE MATERIALIZED VIEW table_output_order AS
 /*
 first_table(pipeline_id:, table_name: min<table_name>, order:) <-
     table_output_order(pipeline_id:, table_name:, order:)
+    #all_records_inserted(pipeline_id:)
 */
 CREATE MATERIALIZED VIEW first_table AS
     SELECT DISTINCT
@@ -67,6 +98,8 @@ CREATE MATERIALIZED VIEW first_table AS
         MIN(table_output_order.table_name) AS table_name,
         table_output_order."order"
     FROM table_output_order
+    -- JOIN all_records_inserted
+    --     ON table_output_order.pipeline_id = all_records_inserted.pipeline_id
     GROUP BY table_output_order.pipeline_id, table_output_order."order";
 
 /*
@@ -83,102 +116,198 @@ CREATE MATERIALIZED VIEW only_one_table_in_group AS
     HAVING COUNT(DISTINCT table_output_order.table_name) = 1;
 
 /*
-next_table(pipeline_id:, prev_table_name:, next_table_name:, order:) <-
-    first_table(pipeline_id:, table_name: prev_table_name, order:)
-    not only_one_table_in_group(pipeline_id:, order:)
+next_table_within_same_order(pipeline_id:, prev_table_name:, next_table_name:) <-
+    table_output_order(pipeline_id:, table_name: prev_table_name, order:)
     table_output_order(pipeline_id:, table_name:, order:)
     next_table_name := min<table_name>
     prev_table_name < table_name
-next_table(pipeline_id:, prev_table_name:, next_table_name:, order:) <-
-    first_table(pipeline_id:, table_name: prev_table_name, order: prev_order)
-    only_one_table_in_group(pipeline_id:, order: prev_order)
-    order := prev_order+1
-    table_output_order(pipeline_id:, table_name:, order:)
-    next_table_name := min<table_name>
-next_table(pipeline_id:, prev_table_name:, next_table_name:, order:) <-
-    next_table(pipeline_id:, next_table_name: prev_table_name, order:)
-    not only_one_table_in_group(pipeline_id:, order:)
-    table_output_order(pipeline_id:, table_name:, order:)
-    next_table_name := min<table_name>
-    prev_table_name < table_name
-next_table(pipeline_id:, prev_table_name:, next_table_name:, order:) <-
-    next_table(pipeline_id:, next_table_name: prev_table_name, order: prev_order)
-    only_one_table_in_group(pipeline_id:, order: prev_order)
-    order := prev_order+1
-    table_output_order(pipeline_id:, table_name:, order:)
-    next_table_name := min<table_name>
 */
-DECLARE RECURSIVE VIEW next_table (pipeline_id TEXT, prev_table_name TEXT, next_table_name TEXT, "order" INTEGER);
+CREATE MATERIALIZED VIEW next_table_within_same_order AS
+    SELECT DISTINCT
+        prev.pipeline_id,
+        prev.table_name AS prev_table_name,
+        MIN("next".table_name) AS next_table_name
+    FROM table_output_order AS prev
+    JOIN table_output_order AS "next"
+        ON prev.pipeline_id = "next".pipeline_id
+        AND prev."order" = "next"."order"
+    WHERE prev.table_name < "next".table_name
+    GROUP BY prev.pipeline_id, prev.table_name;
+
+/*
+next_table(pipeline_id:, prev_table_name:, next_table_name:) <-
+    first_table(pipeline_id:, table_name: prev_table_name, order: 0)
+    next_table_within_same_order(pipeline_id:, prev_table_name:, next_table_name:)
+next_table(pipeline_id:, prev_table_name:, next_table_name:) <-
+    first_table(pipeline_id:, table_name: prev_table_name, order: 0)
+    first_table(pipeline_id:, table_name: next_table_name, order: 1)
+    not next_table_within_same_order(pipeline_id:, prev_table_name:)
+next_table(pipeline_id:, prev_table_name:, next_table_name:) <-
+    next_table(pipeline_id:, next_table_name: prev_table_name)
+    next_table_within_same_order(pipeline_id:, prev_table_name:, next_table_name:)
+next_table(pipeline_id:, prev_table_name:, next_table_name:) <-
+    next_table(pipeline_id:, next_table_name: prev_table_name)
+    table_output_order(pipeline_id:, table_name: prev_table_name, order:)
+    first_table(pipeline_id:, table_name: next_table_name, order: order+1)
+    not next_table_within_same_order(pipeline_id:, prev_table_name:)
+*/
+DECLARE RECURSIVE VIEW next_table (pipeline_id TEXT, prev_table_name TEXT, next_table_name TEXT);
 CREATE MATERIALIZED VIEW next_table AS
     SELECT DISTINCT
         first_table.pipeline_id,
-        first_table.table_name AS prev_table_name,
-        MIN(table_output_order.table_name) AS next_table_name,
-        first_table."order"
+        next_table_within_same_order.prev_table_name,
+        next_table_within_same_order.next_table_name
     FROM first_table
-    JOIN table_output_order
-        ON first_table.pipeline_id = table_output_order.pipeline_id
-        AND first_table."order" = table_output_order."order"
-    WHERE first_table.table_name < table_output_order.table_name
+    JOIN next_table_within_same_order
+        ON first_table.pipeline_id = next_table_within_same_order.pipeline_id
+        AND first_table.table_name = next_table_within_same_order.prev_table_name
+    WHERE first_table."order" = 0
+    
+    UNION
+
+    SELECT DISTINCT
+        prev.pipeline_id,
+        prev.table_name AS prev_table_name,
+        "next".table_name AS next_table_name
+    FROM first_table AS prev
+    JOIN first_table AS "next"
+        ON prev.pipeline_id = "next".pipeline_id
+    WHERE prev."order" = 0 AND "next"."order" = 1
     AND NOT EXISTS (
         SELECT 1
-        FROM only_one_table_in_group
-        WHERE first_table.pipeline_id = only_one_table_in_group.pipeline_id
-        AND first_table."order" = only_one_table_in_group."order"
+        FROM next_table_within_same_order
+        WHERE prev.pipeline_id = next_table_within_same_order.pipeline_id
+        AND prev.table_name = next_table_within_same_order.prev_table_name
     )
-    GROUP BY first_table.pipeline_id, first_table.table_name, first_table."order"
 
     UNION
 
     SELECT DISTINCT
-        first_table.pipeline_id,
-        first_table.table_name AS prev_table_name,
-        MIN(table_output_order.table_name) AS next_table_name,
-        first_table."order"
-    FROM first_table
-    JOIN only_one_table_in_group
-        ON first_table.pipeline_id = only_one_table_in_group.pipeline_id
-        AND first_table."order" = only_one_table_in_group."order"
-    JOIN table_output_order
-        ON first_table.pipeline_id = table_output_order.pipeline_id
-        AND first_table."order"+1 = table_output_order."order"
-    GROUP BY first_table.pipeline_id, first_table.table_name, first_table."order"
+        next_table.pipeline_id,
+        next_table_within_same_order.prev_table_name,
+        next_table_within_same_order.next_table_name
+    FROM next_table
+    JOIN next_table_within_same_order
+        ON next_table.pipeline_id = next_table_within_same_order.pipeline_id
+        AND next_table.next_table_name = next_table_within_same_order.prev_table_name
     
     UNION
-    
+
     SELECT DISTINCT
         next_table.pipeline_id,
         next_table.next_table_name AS prev_table_name,
-        MIN(table_output_order.table_name) AS next_table_name,
-        next_table."order"
+        first_table.table_name AS next_table_name
     FROM next_table
     JOIN table_output_order
         ON next_table.pipeline_id = table_output_order.pipeline_id
-        AND next_table."order" = table_output_order."order"
-    WHERE next_table.next_table_name < table_output_order.table_name
-    AND NOT EXISTS (
+        AND next_table.next_table_name = table_output_order.table_name
+    JOIN first_table
+        ON next_table.pipeline_id = first_table.pipeline_id
+        AND table_output_order."order"+1 = first_table."order"
+    WHERE NOT EXISTS (
         SELECT 1
-        FROM only_one_table_in_group
-        WHERE next_table.pipeline_id = only_one_table_in_group.pipeline_id
-        AND next_table."order" = only_one_table_in_group."order"
-    )
-    GROUP BY next_table.pipeline_id, next_table.next_table_name, next_table."order"
+        FROM next_table_within_same_order
+        WHERE next_table.pipeline_id = next_table_within_same_order.pipeline_id
+        AND next_table.next_table_name = next_table_within_same_order.prev_table_name
+    );
+
+-- /*
+-- next_table(pipeline_id:, prev_table_name:, next_table_name:, order:) <-
+--     first_table(pipeline_id:, table_name: prev_table_name, order:)
+--     not only_one_table_in_group(pipeline_id:, order:)
+--     table_output_order(pipeline_id:, table_name:, order:)
+--     next_table_name := min<table_name>
+--     prev_table_name < table_name
+-- next_table(pipeline_id:, prev_table_name:, next_table_name:, order:) <-
+--     first_table(pipeline_id:, table_name: prev_table_name, order: prev_order)
+--     only_one_table_in_group(pipeline_id:, order: prev_order)
+--     order := prev_order+1
+--     table_output_order(pipeline_id:, table_name:, order:)
+--     next_table_name := min<table_name>
+-- next_table(pipeline_id:, prev_table_name:, next_table_name:, order:) <-
+--     next_table(pipeline_id:, next_table_name: prev_table_name, order:)
+--     not only_one_table_in_group(pipeline_id:, order:)
+--     table_output_order(pipeline_id:, table_name:, order:)
+--     next_table_name := min<table_name>
+--     prev_table_name < table_name
+-- next_table(pipeline_id:, prev_table_name:, next_table_name:, order:) <-
+--     next_table(pipeline_id:, next_table_name: prev_table_name, order: prev_order)
+--     only_one_table_in_group(pipeline_id:, order: prev_order)
+--     order := prev_order+1
+--     table_output_order(pipeline_id:, table_name:, order:)
+--     next_table_name := min<table_name>
+-- */
+-- DECLARE RECURSIVE VIEW next_table (pipeline_id TEXT, prev_table_name TEXT, next_table_name TEXT, "order" INTEGER);
+-- CREATE MATERIALIZED VIEW next_table AS
+--     SELECT DISTINCT
+--         first_table.pipeline_id,
+--         first_table.table_name AS prev_table_name,
+--         MIN(table_output_order.table_name) AS next_table_name,
+--         first_table."order"
+--     FROM first_table
+--     JOIN table_output_order
+--         ON first_table.pipeline_id = table_output_order.pipeline_id
+--         AND first_table."order" = table_output_order."order"
+--     WHERE first_table.table_name < table_output_order.table_name
+--     AND NOT EXISTS (
+--         SELECT 1
+--         FROM only_one_table_in_group
+--         WHERE first_table.pipeline_id = only_one_table_in_group.pipeline_id
+--         AND first_table."order" = only_one_table_in_group."order"
+--     )
+--     GROUP BY first_table.pipeline_id, first_table.table_name, first_table."order"
+
+--     UNION
+
+--     SELECT DISTINCT
+--         first_table.pipeline_id,
+--         first_table.table_name AS prev_table_name,
+--         MIN(table_output_order.table_name) AS next_table_name,
+--         first_table."order"
+--     FROM first_table
+--     JOIN only_one_table_in_group
+--         ON first_table.pipeline_id = only_one_table_in_group.pipeline_id
+--         AND first_table."order" = only_one_table_in_group."order"
+--     JOIN table_output_order
+--         ON first_table.pipeline_id = table_output_order.pipeline_id
+--         AND first_table."order"+1 = table_output_order."order"
+--     GROUP BY first_table.pipeline_id, first_table.table_name, first_table."order"
     
-    UNION
+--     UNION
     
-    SELECT DISTINCT
-        next_table.pipeline_id,
-        next_table.next_table_name AS prev_table_name,
-        MIN(table_output_order.table_name) AS next_table_name,
-        next_table."order"
-    FROM next_table
-    JOIN only_one_table_in_group
-        ON next_table.pipeline_id = only_one_table_in_group.pipeline_id
-        AND next_table."order" = only_one_table_in_group."order"
-    JOIN table_output_order
-        ON next_table.pipeline_id = table_output_order.pipeline_id
-        AND next_table."order"+1 = table_output_order."order"
-    GROUP BY next_table.pipeline_id, next_table.next_table_name, next_table."order";
+--     SELECT DISTINCT
+--         next_table.pipeline_id,
+--         next_table.next_table_name AS prev_table_name,
+--         MIN(table_output_order.table_name) AS next_table_name,
+--         next_table."order"
+--     FROM next_table
+--     JOIN table_output_order
+--         ON next_table.pipeline_id = table_output_order.pipeline_id
+--         AND next_table."order" = table_output_order."order"
+--     WHERE next_table.next_table_name < table_output_order.table_name
+--     AND NOT EXISTS (
+--         SELECT 1
+--         FROM only_one_table_in_group
+--         WHERE next_table.pipeline_id = only_one_table_in_group.pipeline_id
+--         AND next_table."order" = only_one_table_in_group."order"
+--     )
+--     GROUP BY next_table.pipeline_id, next_table.next_table_name, next_table."order"
+    
+--     UNION
+    
+--     SELECT DISTINCT
+--         next_table.pipeline_id,
+--         next_table.next_table_name AS prev_table_name,
+--         MIN(table_output_order.table_name) AS next_table_name,
+--         next_table."order"
+--     FROM next_table
+--     JOIN only_one_table_in_group
+--         ON next_table.pipeline_id = only_one_table_in_group.pipeline_id
+--         AND next_table."order" = only_one_table_in_group."order"
+--     JOIN table_output_order
+--         ON next_table.pipeline_id = table_output_order.pipeline_id
+--         AND next_table."order"+1 = table_output_order."order"
+--     GROUP BY next_table.pipeline_id, next_table.next_table_name, next_table."order";
 
 /*
 fact_alias(pipeline_id:, rule_id:, table_name:, alias:, negated:, fact_index:) <-
@@ -202,6 +331,7 @@ first_fact_alias(
     negated:, fact_index: min<fact_index>
 ) <-
     fact_alias(pipeline_id:, rule_id:, table_name:, alias:, negated:, fact_index:)
+    #all_records_inserted(pipeline_id:)
 */
 CREATE MATERIALIZED VIEW first_fact_alias AS
     SELECT DISTINCT
@@ -213,6 +343,8 @@ CREATE MATERIALIZED VIEW first_fact_alias AS
         fact_alias.negated,
         MIN(fact_alias.fact_index) AS fact_index
     FROM fact_alias
+    -- JOIN all_records_inserted
+    --     ON fact_alias.pipeline_id = all_records_inserted.pipeline_id
     GROUP BY fact_alias.pipeline_id, fact_alias.rule_id, fact_alias.negated;
 
 /*
@@ -241,6 +373,7 @@ CREATE MATERIALIZED VIEW adjacent_facts AS
 /*
 table_first_rule(pipeline_id:, table_name:, rule_id: min<rule_id>) <-
     rule(pipeline_id:, table_name:, rule_id:)
+    #all_records_inserted(pipeline_id:)
 */
 CREATE MATERIALIZED VIEW table_first_rule AS
     SELECT DISTINCT
@@ -248,6 +381,8 @@ CREATE MATERIALIZED VIEW table_first_rule AS
         rule.table_name,
         MIN(rule.rule_id) AS rule_id
     FROM rule
+    -- JOIN all_records_inserted
+    --     ON rule.pipeline_id = all_records_inserted.pipeline_id
     GROUP BY rule.pipeline_id, rule.table_name;
 
 /*
@@ -470,6 +605,7 @@ CREATE MATERIALIZED VIEW var_bound_in_fact AS
 /*
 canonical_fact_var_sql(pipeline_id:, rule_id:, var_name:, sql: argmin<sql, fact_index>, fact_index: min<fact_index>) <-
     var_bound_in_fact(pipeline_id:, rule_id:, var_name:, negated: false, sql:, fact_index:)
+    #all_records_inserted(pipeline_id:)
 */
 CREATE MATERIALIZED VIEW canonical_fact_var_sql AS
     SELECT DISTINCT
@@ -479,6 +615,8 @@ CREATE MATERIALIZED VIEW canonical_fact_var_sql AS
         MIN(var_bound_in_fact.fact_index) AS fact_index,
         ARG_MIN(var_bound_in_fact.sql, var_bound_in_fact.fact_index) AS sql
     FROM var_bound_in_fact
+    -- JOIN all_records_inserted
+    --     ON var_bound_in_fact.pipeline_id = all_records_inserted.pipeline_id
     WHERE NOT var_bound_in_fact.negated
     GROUP BY var_bound_in_fact.pipeline_id, var_bound_in_fact.rule_id, var_bound_in_fact.var_name;
 
@@ -487,6 +625,7 @@ match_var_dependency(pipeline_id:, rule_id:, var_name:, parent_var_name:) <-
     body_match(pipeline_id:, rule_id:, match_id:, left_expr_id:, left_expr_type:, right_expr_id:, right_expr_type:)
     var_mentioned_in_expr(pipeline_id:, expr_id: left_expr_id, expr_type: left_expr_type, var_name:)
     var_mentioned_in_expr(pipeline_id:, expr_id: right_expr_id, expr_type: right_expr_type, var_name: parent_var_name)
+    #all_records_inserted(pipeline_id:)
     not var_bound_in_fact(pipeline_id:, rule_id:, var_name:, negated: false)
 match_var_dependency(pipeline_id:, rule_id:, var_name:, parent_var_name:) <-
     match_var_dependency(pipeline_id:, rule_id:, var_name:, parent_var_name: middle_var_name)
@@ -508,6 +647,8 @@ CREATE MATERIALIZED VIEW match_var_dependency AS
         ON body_match.pipeline_id = r.pipeline_id
         AND body_match.right_expr_id = r.expr_id
         AND body_match.right_expr_type = r.expr_type
+    -- JOIN all_records_inserted
+    --     ON body_match.pipeline_id = all_records_inserted.pipeline_id
     WHERE NOT EXISTS (
         SELECT 1
         FROM var_bound_in_fact

@@ -144,3 +144,11 @@ CREATE TABLE body_sql_cond (
     cond_id TEXT NOT NULL,
     sql_expr_id TEXT NOT NULL
 ) WITH ('materialized' = 'true');
+
+/*
+# Use these records to prevent computing recursive views till all records are inserted.
+# Since with incomplete data they may get into an infinite loop.
+*/
+-- CREATE TABLE all_records_inserted (
+--     pipeline_id TEXT NOT NULL
+-- ) WITH ('materialized' = 'true');

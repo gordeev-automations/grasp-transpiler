@@ -146,7 +146,6 @@ def parse(text):
     parser = Lark(grammar_text, parser="earley", propagate_positions=True)
     tree = parser.parse(text)
     idgen = natural_num_generator()
-    # return tree
     return records_from_tree(tree, idgen)
 
 # import importlib
